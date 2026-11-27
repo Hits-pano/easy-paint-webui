@@ -230,7 +230,98 @@ const beTail = `
 }
 `
 
-const backendJs = be.join('\n') + '\n' + beTail
+let backendJs = be.join('\n') + '\n' + beTail
+
+/* ------------------------------------------- 配置目录改到 %APPDATA% ---- */
+
+step('改写配置目录')
+
+// 插件版必须放 ~/.dsh/easy-paint（和 DSH 一致）；
+// 独立版不能这样——那目录名会让人以为非装 DSH 不可，
+// 而且 DSH 被卸载/清理时可能连带删掉。
+//
+// 独立版改用 %APPDATA%\easy-paint，首次启动时把旧位置的数据搬过来。
+const APP_DIR_EXPR = "process.env.APPDATA ? join(process.env.APPDATA, 'easy-paint') : join(homedir(), '.easy-paint')"
+
+let rewrites = 0
+backendJs = backendJs.replace(
+  "const COMFY_LOG = join(homedir(), '.dsh', 'easy-paint', 'comfyui.log')",
+  () => { rewrites++; return "const COMFY_LOG = join(APP_DIR, 'comfyui.log')" }
+)
+backendJs = backendJs.replace(
+  "const STATE_DIR = join(homedir(), '.dsh', 'easy-paint')",
+  () => { rewrites++; return "const STATE_DIR = APP_DIR" }
+)
+
+if (rewrites !== 2) {
+  die(`配置目录改写失败：只替换了 ${rewrites}/2 处，插件源的路径定义可能变了`)
+}
+ok('COMFY_LOG / STATE_DIR → %APPDATA%\\easy-paint')
+
+// APP_DIR 必须定义在 COMFY_LOG 之前——后者在模块顶层就用到了它，
+// 放到 CONFIG_PATH 前面会触发 TDZ（Cannot access before initialization）。
+const anchor = 'const COMFY_LOG = '
+const appDirDef = `/**
+ * 独立版的配置目录。
+ *
+ * 插件版存在 ~/.dsh/easy-paint（和 DSH 保持一致），但独立版不该用那个目录：
+ * 名字会让人以为非装 DSH 不可，且卸载 DSH 时可能被清理工具连带删掉。
+ * 这里改用 Windows 标准的 %APPDATA%\\easy-paint。
+ */
+const APP_DIR = ${APP_DIR_EXPR}
+const LEGACY_DIR = join(homedir(), '.dsh', 'easy-paint')
+
+/** 老版本把配置放在 ~/.dsh/easy-paint，第一次启动时搬过来 */
+function migrateLegacyState() {
+  try {
+    if (existsSync(STATE_FILE)) return
+    if (!existsSync(LEGACY_DIR)) return
+    mkdirSync(STATE_DIR, { recursive: true })
+    for (const name of ['config.json', 'models-cache.json']) {
+      const from = join(LEGACY_DIR, name)
+      const to = join(STATE_DIR, name)
+      if (existsSync(from) && !existsSync(to)) copyFileSync(from, to)
+    }
+  } catch {
+    // 迁移失败不影响启动：用户重新配一次即可
+  }
+}
+
+`
+
+if (!backendJs.includes(anchor)) die('找不到 COMFY_LOG 锚点，无法插入 APP_DIR 定义')
+backendJs = backendJs.replace(anchor, appDirDef + anchor)
+
+// 补需要的 fs 函数。backend.js 保持 ESM import（转 require 是 build.mjs 的活），
+// 所以这里改的是 import 语句，不是 require。
+const fsImportRe = /^import \{([^}]+)\} from 'node:fs'$/m
+const fsMatch = backendJs.match(fsImportRe)
+if (!fsMatch) {
+  die('找不到 `import ... from \'node:fs\'`，无法补 mkdirSync / copyFileSync')
+}
+const fsNames = new Set(fsMatch[1].split(',').map((x) => x.trim()).filter(Boolean))
+let added = 0
+for (const fn of ['mkdirSync', 'copyFileSync']) {
+  if (!fsNames.has(fn)) { fsNames.add(fn); added++ }
+}
+if (added > 0) {
+  backendJs = backendJs.replace(
+    fsImportRe,
+    () => `import { ${[...fsNames].join(', ')} } from 'node:fs'`
+  )
+  ok(`补齐 fs 导入（+${added} 个函数）`)
+} else {
+  ok('fs 导入已齐全')
+}
+
+// 启动时调用一次迁移
+const mainAnchor = 'void loadFileConfig()'
+if (backendJs.includes(mainAnchor)) {
+  backendJs = backendJs.replace(mainAnchor, 'migrateLegacyState()\n  void loadFileConfig()')
+  ok('已挂上迁移调用')
+} else {
+  warn('找不到 loadFileConfig 调用点，迁移不会自动执行')
+}
 
 /* ---------------------------------------------------------- 校验 ---- */
 
@@ -272,6 +363,27 @@ else { console.error('   ✗ backend.js 缺 createApp'); failed = true }
 
 if (!backendJs.includes('ctx.tools.register')) ok('backend.js 已无 ctx.tools.register ✓')
 else { console.error('   ✗ backend.js 里还有 ctx.tools.register'); failed = true }
+
+// 3.4) 迁移所需函数必须可用
+for (const fn of ['mkdirSync', 'copyFileSync']) {
+  const hasImport = new RegExp(`import \\{[^}]*\\b${fn}\\b[^}]*\\} from 'node:fs'`).test(backendJs)
+  if (hasImport) ok(`已导入 ${fn} ✓`)
+  else { console.error(`   ✗ 缺 ${fn} 的导入，迁移会失败`); failed = true }
+}
+
+// 3.5) 配置目录必须已改写（不能再指向 .dsh）
+if (!backendJs.includes("'easy-paint')") && !backendJs.includes('APP_DIR')) {
+  console.error('   ✗ backend.js 里找不到 APP_DIR，配置目录改写没生效')
+  failed = true
+}
+const dshRefs = (backendJs.match(/\.dsh', 'easy-paint'/g) ?? []).length
+if (dshRefs === 0) ok('已无 .dsh 路径残留 ✓')
+else {
+  // LEGACY_DIR 里保留一处是正常的（用于迁移）
+  const legacyOnly = backendJs.includes("const LEGACY_DIR = join(homedir(), '.dsh', 'easy-paint')")
+  if (dshRefs === 1 && legacyOnly) ok('.dsh 路径只剩迁移用的 LEGACY_DIR ✓')
+  else { console.error(`   ✗ 还有 ${dshRefs} 处 .dsh 路径残留`); failed = true }
+}
 
 // 4) 路由数量
 const routeCount = (backendJs.match(/\[[A-Z_]+_PATH\]: on/g) ?? []).length

@@ -13,7 +13,7 @@
  *   3. <home>/.dsh/easy-paint/config.json（设置页写入，改完立即生效，不用重启）
  */
 import { execFile, spawn } from 'node:child_process'
-import { existsSync, openSync, readdirSync } from 'node:fs'
+import { existsSync, openSync, readdirSync, mkdirSync, copyFileSync } from 'node:fs'
 import { mkdir, readdir, readFile, writeFile, open, stat } from 'node:fs/promises'
 import net from 'node:net'
 import { homedir } from 'node:os'
@@ -142,7 +142,33 @@ const DEFAULTS = {
   selfCheckModel: '/models/Qwen3-Omni-30B-A3B-Instruct',
 }
 
-const COMFY_LOG = join(homedir(), '.dsh', 'easy-paint', 'comfyui.log')
+/**
+ * 独立版的配置目录。
+ *
+ * 插件版存在 ~/.dsh/easy-paint（和 DSH 保持一致），但独立版不该用那个目录：
+ * 名字会让人以为非装 DSH 不可，且卸载 DSH 时可能被清理工具连带删掉。
+ * 这里改用 Windows 标准的 %APPDATA%\easy-paint。
+ */
+const APP_DIR = process.env.APPDATA ? join(process.env.APPDATA, 'easy-paint') : join(homedir(), '.easy-paint')
+const LEGACY_DIR = join(homedir(), '.dsh', 'easy-paint')
+
+/** 老版本把配置放在 ~/.dsh/easy-paint，第一次启动时搬过来 */
+function migrateLegacyState() {
+  try {
+    if (existsSync(STATE_FILE)) return
+    if (!existsSync(LEGACY_DIR)) return
+    mkdirSync(STATE_DIR, { recursive: true })
+    for (const name of ['config.json', 'models-cache.json']) {
+      const from = join(LEGACY_DIR, name)
+      const to = join(STATE_DIR, name)
+      if (existsSync(from) && !existsSync(to)) copyFileSync(from, to)
+    }
+  } catch {
+    // 迁移失败不影响启动：用户重新配一次即可
+  }
+}
+
+const COMFY_LOG = join(APP_DIR, 'comfyui.log')
 
 const CONFIG_PATH = '/api/easy-paint/config'
 const STATUS_PATH = '/api/easy-paint/status'
@@ -156,7 +182,7 @@ const DRAW_PATH = '/api/easy-paint/draw'
 const IMAGE_PATH = '/api/easy-paint/image'
 const REVEAL_PATH = '/api/easy-paint/reveal'
 const OPEN_OUTPUT_PATH = '/api/easy-paint/open-output'
-const STATE_DIR = join(homedir(), '.dsh', 'easy-paint')
+const STATE_DIR = APP_DIR
 const STATE_FILE = join(STATE_DIR, 'config.json')
 // 模型列表缓存：ComfyUI 关着时设置页仍然有下拉可选，不用逼用户手打文件名
 const MODELS_CACHE_FILE = join(STATE_DIR, 'models-cache.json')
@@ -1809,6 +1835,7 @@ export function createApp(ctx, rawConfig) {
   }
 
   // 启动即读一次；之后的写会在 POST 里同步更新内存，不必每张图都读盘。
+  migrateLegacyState()
   void loadFileConfig()
   void loadModelsCache().then((cached) => { modelsCache = cached })
 

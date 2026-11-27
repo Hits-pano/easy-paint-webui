@@ -29,7 +29,7 @@
 | 出图自检 | ✅ 视觉检查 | ❌ 没有 |
 | 快速出图 / 工作流 / 模型扫描 / 自动启停 ComfyUI | ✅ | ✅ **完全一致** |
 
-两边**共用同一份配置**，装哪个都不影响另一个。
+两边**各用各的配置**，装哪个都不影响另一个（插件版在 `~\.dsh\`，独立版在 `%APPDATA%`）。
 
 ## 为什么只有 22 MB
 
@@ -161,10 +161,15 @@
 ## 配置文件
 
 ```
-%USERPROFILE%\.dsh\easy-paint\config.json
+%APPDATA%\easy-paint\config.json
 ```
 
-和 [DSH 插件版](https://github.com/Hits-pano/dsh-easy-paint)**共用**同一份配置。好处是两边配好后不用重复设置。
+即 `C:\Users\你的用户名\AppData\Roaming\easy-paint\config.json`。
+
+Windows 应用的标准配置位置，和 DSH 无关 —— **不需要装 DSH**，程序会自己创建这个目录。
+
+> **从旧版本升级？** 早期版本把配置放在 `~\.dsh\easy-paint\`。新版本第一次启动会自动把
+> `config.json` 和 `models-cache.json` 搬过来，你什么都不用做。
 
 ---
 
@@ -178,6 +183,7 @@
 | **端口固定 7860** | 被占用时用 `set EASY_PAINT_PORT=7861` 换一个 |
 | **Windows only** | 打包链用了 PE 修改和 UPX，只做了 Windows |
 | **模型不会自动下载** | 见上方「模型」 |
+| **配置和插件版不互通** | 各自独立：插件版 ~\\.dsh\\，独立版 %APPDATA% |
 
 ---
 
