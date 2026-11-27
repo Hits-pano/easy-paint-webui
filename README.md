@@ -8,13 +8,17 @@
 
 在浏览器里输提示词，出图存桌面。ComfyUI 没开时会自动帮你拉起来。
 
-**[⬇ 下载 EasyPaint.exe](https://github.com/Hits-pano/easy-paint-webui/releases/latest)** · 22 MB · Windows
+**[⬇ 下载 EasyPaint.exe（最新版）](https://github.com/Hits-pano/easy-paint-webui/releases/latest)** · 22 MB · Windows
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows-blue.svg)]()
 [![Size](https://img.shields.io/badge/size-22%20MB-green.svg)]()
 
 ---
+
+> **文件名带版本号**：Release 附件叫 `EasyPaint-1.0.1.exe` 这样。
+> 想固定下载最新版，用这个链接（永远指向最新）：
+> `https://github.com/Hits-pano/easy-paint-webui/releases/latest`
 
 ## 这是什么
 
@@ -269,7 +273,7 @@ EasyPaint-1.0.1.exe
 
 **Q：能不能给别人用？**
 
-可以。把下载的 exe 单独复制过去就行 —— 它是单文件，不需要其他任何东西（Release 附件里的文件名是 `EasyPaint.exe`，本地构建的是 `EasyPaint-<版本>.exe`，两个是同一个程序）。对方需要装 ComfyUI 和有浏览器。
+可以。把下载的 exe 单独复制过去就行 —— 它是单文件，不需要其他任何东西。对方需要装 ComfyUI 和有浏览器。
 
 **Q：和插件版能同时用吗？**
 
