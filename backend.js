@@ -371,12 +371,12 @@ async function visionCheck(services, buffer, prompt, cfg) {
   // 真正的中断才直接放弃；max-tokens 仍尝试解析已有内容
   if (finishKind === 'error' || finishKind === 'aborted') {
     const detail = finishFailure === '' ? '' : `（${finishFailure}）`
-    // xxx-vision 是识图插件生成的包装路由，失败最常见的原因是本地视觉后端没启动
+    // xxx-vision 是识图插件生成的包装路由，失败最常见的原因是它依赖的上游没起
     const twin = provider.endsWith('-vision')
     return {
       mode: 'vision', ok: true, skipped: true,
       issues: [twin
-        ? `${provider} 是识图包装路由，但后端没有响应——检查本地 Ollama / LM Studio 是否在运行，或改用不带 -vision 的模型${detail}`
+        ? `${provider} 是识图包装路由，但后端没有响应——检查该模型的 DSH 配置与上游服务，或改用不带 -vision 的模型${detail}`
         : `模型调用中断（${finishKind}）${detail}`],
     }
   }
