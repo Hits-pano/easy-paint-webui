@@ -41,7 +41,7 @@ const args = process.argv.slice(2)
 const srcArgIdx = args.indexOf('--src')
 const SRC = srcArgIdx >= 0 && args[srcArgIdx + 1]
   ? resolve(args[srcArgIdx + 1])
-  : resolve(HERE, '..', '..', '工作区1', 'dsh-easy-paint')
+  : resolve(HERE, '..', '..', '..', '工作区1', 'dsh-easy-paint')
 const doBuild = args.includes('--build')
 
 const step = (m) => console.log(`\n>> ${m}`)
