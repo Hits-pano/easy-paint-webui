@@ -91,8 +91,8 @@ const DEFAULTS = {
   zImageNegative: 'blurry, low quality, distorted, watermark, overexposed, washed out',
   sdxlPositive: 'masterpiece, best quality, high quality, detailed',
   sdxlNegative: 'blurry, low quality, distorted, watermark, overexposed, blown highlights, washed out',
-  // 已停用：图片固定存到 <ComfyUI>/output/Easy Paint/，由工作流的 filename_prefix 决定。
-  // 保留这个字段只为兼容旧配置，不会再生效。
+  // 留空 = 图只留在 <ComfyUI>/output/Easy Paint/（工作流的 filename_prefix 决定）；
+  // 填了路径 = 出图后把图挪过去，ComfyUI 里的那份删掉，只留一份。
   outputDir: '',
   timeoutMs: 600000,
   // 出图前若连不上 ComfyUI，就用这三个字段把它拉起来。
@@ -193,7 +193,7 @@ const MODELS_CACHE_FILE = join(STATE_DIR, 'models-cache.json')
 /**
  * 从配置里挑出 DEFAULTS 认识的键。
  *
- * 注意空串的处理：多数字段空串是有意义的（比如 outputDir 清空表示用默认目录），
+ * 注意空串的处理：多数字段空串是有意义的（比如 outputDir 清空表示只用 ComfyUI 的目录），
  * 但模型字段空串没意义——它只会让「默认模型」失效，出图时报「还没选模型」。
  * 所以模型字段的空串当作「没填」跳过，让 DEFAULTS 兜底。
  */

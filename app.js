@@ -109,7 +109,6 @@ const zh = {
   quickRevealFailed: '打不开文件夹',
   quickClosePreview: '关闭预览',
 
-  outputDirPlaceholder: '',
   quickFailed: '出图失败',
   foldQwen: 'Qwen 设置',
   foldQwenHint: 'Qwen-Image 分离式三件套（diffusion_models + text_encoders + vae）',
@@ -159,9 +158,8 @@ const zh = {
   loraStrengthHint: '权重 0–2，0.8 常用',
   outputDir: '输出目录',
   outputDirHint: '留空 = 存在 ComfyUI 的 output\\Easy Paint\\。填了路径就挪过去，ComfyUI 里不留。',
-outputDirPlaceholder: '留空 = ComfyUI 的 output\\Easy Paint\\',
-outputDirUnset: '还没选 ComfyUI 路径',
-    outputDirUnset: '还没选 ComfyUI 路径',
+  outputDirPlaceholder: '留空 = ComfyUI 的 output\\Easy Paint\\',
+  outputDirUnset: '还没选 ComfyUI 路径',
   gpu: '显卡',
   vram: '显存',
   hwUnknown: '未检测到（ComfyUI 运行后自动获取）',
@@ -288,12 +286,6 @@ const en = {
   pickerProbeNone: 'No ComfyUI in this folder',
   pickerConnecting: 'Connecting…',
   pickerProbeHint: 'Press "Use this folder" to save and connect',
-  pickerScanning: '正在查找 ComfyUI…',
-  pickerProbeFound: '✓ 找到 ComfyUI，已填写路径并连接',
-  pickerProbeMulti: '这里有 {n} 个 ComfyUI，点一个用',
-  pickerProbeNone: '这个目录里没有找到 ComfyUI',
-  pickerConnecting: '连接中…',
-  pickerProbeHint: '点「用这个目录」才会写入并连接',
   comfyOnline: 'ComfyUI online',
   comfyLinked: 'ComfyUI linked, waiting to start',
   comfyInvalid: 'Choose the ComfyUI folder again',
@@ -302,7 +294,6 @@ const en = {
   quickRevealFailed: 'Could not open the folder',
   quickClosePreview: 'Close preview',
 
-  outputDirPlaceholder: '',
   quickFailed: 'Render failed',
   foldQwen: 'Qwen',
   foldQwenHint: 'Qwen-Image split files (diffusion_models + text_encoders + vae)',
@@ -352,9 +343,8 @@ const en = {
   loraStrengthHint: 'Weight 0-2, 0.8 is typical',
   outputDir: 'Output directory',
   outputDirHint: 'Empty = ComfyUI output\\Easy Paint\\. With a path set, images move there and are removed from ComfyUI.',
-outputDirPlaceholder: 'Empty = ComfyUI output\\Easy Paint\\',
-outputDirUnset: 'ComfyUI path not set yet',
-    outputDirUnset: 'ComfyUI path not set yet',
+  outputDirPlaceholder: 'Empty = ComfyUI output\\Easy Paint\\',
+  outputDirUnset: 'ComfyUI path not set yet',
   gpu: 'GPU',
   vram: 'VRAM',
   hwUnknown: 'Not detected (available once ComfyUI runs)',
@@ -1416,8 +1406,8 @@ const openOutputDir = React.useCallback(() => {
   window.setTimeout(() => setOpeningOutput(false), 200)
 }, [])
 
-// 输出目录是只读展示：图片由 ComfyUI 直接存到 <ComfyUI>/output/Easy Paint/，
-// 路径从已配置的 ComfyUI 根目录推出来，插件不参与决定。
+// 鼠标悬停在输出目录输入框上时的提示：告诉用户图默认落在 ComfyUI 的哪里
+// （输入框本身是可编辑的自定义目录，留空就用这个默认位置）
 const outputDirShown = React.useMemo(() => {
   const root = typeof draft.comfyWorkdir === 'string' ? draft.comfyWorkdir.trim() : ''
   return root === '' ? t('outputDirUnset') : `${root}\\output\\Easy Paint`
