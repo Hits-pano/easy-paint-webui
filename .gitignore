@@ -1,0 +1,11 @@
+# 构建中间产物
+.build/
+
+# 同步时的临时文件
+.app.js.bak
+.backend.js.bak
+.sync-app.mjs
+.sync-backend.mjs
+
+# 打包工具（体积大，使用者不需要；要自己打就用 build.mjs 里说明的方式放回来）
+build-tools/postject/node_modules/
