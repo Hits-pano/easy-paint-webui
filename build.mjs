@@ -269,9 +269,10 @@ if (!noUpx) {
 /* -------------------------------------------------------- 输出 ---- */
 
 step('完成')
-// 直接放根目录：这不是「发给别人的构建产物」，是用户要双击的东西，
-// 多一层 dist 只会让用户多点一次。
-const finalExe = join(HERE, 'EasyPaint.exe')
+// 成品放在源码目录的上一级：这里是与源码分开的构建产物目录，
+// 双击上级的 EasyPaint.exe 就能用。exe 不入 git（见 .gitignore），
+// GitHub 上通过 Release 附件分发。
+const finalExe = join(HERE, '..', 'EasyPaint.exe')
 copyFileSync(target, finalExe)
 ok(`${finalExe}`)
 ok(`${(statSync(finalExe).size / 1024 / 1024).toFixed(2)} MB`)
