@@ -14,7 +14,7 @@
  */
 import { execFile, spawn } from 'node:child_process'
 import { existsSync, openSync, readdirSync, mkdirSync, copyFileSync } from 'node:fs'
-import { mkdir, readdir, readFile, writeFile, open, stat } from 'node:fs/promises'
+import { mkdir, readdir, readFile, writeFile, open, stat, rm, copyFile, rename } from 'node:fs/promises'
 import net from 'node:net'
 import { homedir } from 'node:os'
 import { dirname, basename, join, resolve, relative } from 'node:path'
@@ -221,16 +221,24 @@ function resolveConfig(patchConfig, fileConfig) {
 }
 
 /**
- * 图片落在哪：ComfyUI 自己的 output 目录下的 Easy Paint 子目录。
+ * 图片的「主目录」：ComfyUI 自己的 output\Easy Paint\。
  *
- * 以前是插件把图从 ComfyUI 下载回来再写到桌面 —— 那样 Node 进程要写文件，
- * DSH 每次都得放行；而且图被搬了两道手。现在 ComfyUI 直接存到自己的
- * output\Easy Paint\（工作流的 filename_prefix 带了这个子目录），插件只读不写。
+ * 工作流的 filename_prefix 带了这个子目录，所以图是 ComfyUI 直接写进去的，
+ * 插件不搬运。用户想另存一份时填 outputDir，见 resolveCopyDir。
  */
 function resolveOutputDir(cfg) {
   const root = comfyRoot(cfg)
   if (root === '') return ''
   return join(root, 'output', 'Easy Paint')
+}
+
+/**
+ * 用户额外指定的输出目录（可选）。
+ * 填了就在 ComfyUI 存完之后再复制一份过去；留空则只用 ComfyUI 那边。
+ */
+function resolveCopyDir(cfg) {
+  const raw = typeof cfg.outputDir === 'string' ? cfg.outputDir.trim() : ''
+  return raw === '' ? '' : raw
 }
 
 /* ------------------------------------------------------------ HTTP 小工具 ---- */
@@ -1824,13 +1832,37 @@ async function runWorkflow(baseUrl, prompt, { timeoutMs, signal }) {
  * 插件不再把这个文件复制一份 —— 图本来就已经在硬盘上了（而且就是用户能
  * 直接打开的那个位置），再写一份既浪费空间，又让 DSH 每次都要放行写权限。
  */
-function saveImage(image, cfg) {
+async function saveImage(image, cfg) {
   const root = comfyRoot(cfg)
   if (root === '') return ''
   const type = String(image.type ?? 'output')
   const sub = String(image.subfolder ?? '').replace(/^[/\\]+|[/\\]+$/gu, '')
   const name = String(image.filename ?? 'out.png')
-  return sub === '' ? join(root, type, name) : join(root, type, sub, name)
+  const source = sub === '' ? join(root, type, name) : join(root, type, sub, name)
+
+  // 用户填了别的目录：把图挪过去，并删掉 ComfyUI 里的那份 ——
+  // 用户明确指定了存哪，就不该在 ComfyUI 的 output 里再留一堆。
+  // 留空时什么也不做，图就留在 ComfyUI 的 output\Easy Paint\。
+  const copyTo = resolveCopyDir(cfg)
+  if (copyTo !== '') {
+    try {
+      await mkdir(copyTo, { recursive: true })
+      const dest = join(copyTo, name)
+      try {
+        // 同一个盘：rename 是原子的，又快
+        await rename(source, dest)
+      } catch {
+        // 跨盘（C: → D:）rename 会失败，退回「复制 + 删原件」
+        await copyFile(source, dest)
+        await rm(source, { force: true })
+      }
+      return dest
+    } catch {
+      // 挪不过去（权限/路径不可达）就保留 ComfyUI 那份，出图不算失败
+      return source
+    }
+  }
+  return source
 }
 
 /* ------------------------------------------------------------------ 入口 ---- */
@@ -1971,7 +2003,7 @@ async function generateImageUnlocked(args, exec) {
           const workflow = buildOnce()
           lastWorkflow = workflow
           const images = await runWorkflow(baseUrl, workflow.prompt, { timeoutMs, signal: exec?.signal })
-          const file = saveImage(images[0], cfg)
+          const file = await saveImage(images[0], cfg)
 
           // 图生图的尺寸由参考图决定（VAEEncode 用原图 latent），不是配置的画幅；
           // 这里用实际输出尺寸覆盖，免得工具报告和真实文件对不上
@@ -2342,6 +2374,7 @@ async function generateImageUnlocked(args, exec) {
       respondJson(res, 500, { ok: false, error: error?.message ?? String(error) })
     }
   }
+
   const onModels = async (req, res) => {
     if (!isLocalRequest(req)) {
       respondJson(res, 403, { ok: false, error: '只接受本机请求' })

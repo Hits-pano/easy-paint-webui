@@ -19,6 +19,7 @@ function joinLike(dir, name) {
   return base === '' ? name : `${base}\\${name}`
 }
 
+
 const API_CONFIG = 'api/easy-paint/config'
 const API_STATUS = 'api/easy-paint/status'
 const API_MODELS = 'api/easy-paint/models'
@@ -157,7 +158,9 @@ const zh = {
   loraMismatchTitle: '这个 LoRA 是为 {lora} 训练的，当前 Checkpoint 属于 {cp}。混用效果会打折。',
   loraStrengthHint: '权重 0–2，0.8 常用',
   outputDir: '输出目录',
-  outputDirHint: '图片存在 ComfyUI 的 output\\Easy Paint\\ 下，由 ComfyUI 直接保存，这里只读。',
+  outputDirHint: '留空 = 存在 ComfyUI 的 output\\Easy Paint\\。填了路径就挪过去，ComfyUI 里不留。',
+outputDirPlaceholder: '留空 = ComfyUI 的 output\\Easy Paint\\',
+outputDirUnset: '还没选 ComfyUI 路径',
     outputDirUnset: '还没选 ComfyUI 路径',
   gpu: '显卡',
   vram: '显存',
@@ -348,7 +351,9 @@ const en = {
   loraMismatchTitle: 'This LoRA was trained for {lora}, but the current Checkpoint is {cp}. Mixing them weakens the effect.',
   loraStrengthHint: 'Weight 0-2, 0.8 is typical',
   outputDir: 'Output directory',
-  outputDirHint: 'Images are saved by ComfyUI into output\\Easy Paint\\; this path is read-only.',
+  outputDirHint: 'Empty = ComfyUI output\\Easy Paint\\. With a path set, images move there and are removed from ComfyUI.',
+outputDirPlaceholder: 'Empty = ComfyUI output\\Easy Paint\\',
+outputDirUnset: 'ComfyUI path not set yet',
     outputDirUnset: 'ComfyUI path not set yet',
   gpu: 'GPU',
   vram: 'VRAM',
@@ -2054,14 +2059,16 @@ const outputDirShown = React.useMemo(() => {
         h('div', { className: 'qwd-hint qwd-hint-one-line', title: t('outputDirHint') }, t('outputDirHint')),
       ),
       h('div', { className: 'qwd-input-embedded' },
-        // 只读：图片存在 ComfyUI 自己的 output\Easy Paint\ 下，由工作流决定，
-        // 不在这里改。显示出来只是让用户知道去哪找。
+        // 留空 = 图片就留在 ComfyUI 的 output\Easy Paint\ 里；
+        // 填了路径 = 出图后把图挪过去，ComfyUI 里那份删掉（只留一份）。
         h('input', {
           className: 'qwd-input',
           type: 'text',
-          readOnly: true,
-          value: outputDirShown,
+          placeholder: t('outputDirPlaceholder'),
           title: outputDirShown,
+          value: draft.outputDir ?? '',
+          disabled,
+          onChange: (event) => patch('outputDir', event.target.value),
         }),
         h('button', {
           type: 'button',
