@@ -2069,6 +2069,9 @@ async function generateImageUnlocked(args, exec) {
           selfCheck: first.selfCheck,
           selfCheckSeconds: shots.reduce((sum, shot) => sum + shot.selfCheckSeconds, 0),
           ignoredArgs,
+          // 本地图片路径不能直接写进 markdown（DSH 渲染器只认 http/data:），
+          // 要展示必须调 read_image。这里把做法直接告诉模型，省得它猜。
+          displayHint: '要在对话里展示图片，请对 path（或 paths 里每个）调用 read_image；直接写 ![](本地路径) 显示不出来。',
         }
 }
 
