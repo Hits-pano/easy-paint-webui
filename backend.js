@@ -91,6 +91,8 @@ const DEFAULTS = {
   zImageNegative: 'blurry, low quality, distorted, watermark, overexposed, washed out',
   sdxlPositive: 'masterpiece, best quality, high quality, detailed',
   sdxlNegative: 'blurry, low quality, distorted, watermark, overexposed, blown highlights, washed out',
+  // 已停用：图片固定存到 <ComfyUI>/output/Easy Paint/，由工作流的 filename_prefix 决定。
+  // 保留这个字段只为兼容旧配置，不会再生效。
   outputDir: '',
   timeoutMs: 600000,
   // 出图前若连不上 ComfyUI，就用这三个字段把它拉起来。
@@ -218,9 +220,17 @@ function resolveConfig(patchConfig, fileConfig) {
   return { ...DEFAULTS, ...sanitize(patchConfig), ...sanitize(fileConfig) }
 }
 
+/**
+ * 图片落在哪：ComfyUI 自己的 output 目录下的 Easy Paint 子目录。
+ *
+ * 以前是插件把图从 ComfyUI 下载回来再写到桌面 —— 那样 Node 进程要写文件，
+ * DSH 每次都得放行；而且图被搬了两道手。现在 ComfyUI 直接存到自己的
+ * output\Easy Paint\（工作流的 filename_prefix 带了这个子目录），插件只读不写。
+ */
 function resolveOutputDir(cfg) {
-  const raw = typeof cfg.outputDir === 'string' ? cfg.outputDir.trim() : ''
-  return raw === '' ? join(homedir(), 'Desktop', 'Easy Paint') : raw
+  const root = comfyRoot(cfg)
+  if (root === '') return ''
+  return join(root, 'output', 'Easy Paint')
 }
 
 /* ------------------------------------------------------------ HTTP 小工具 ---- */
@@ -825,7 +835,7 @@ function buildSdxlWorkflow(cfg, args) {
     6: { class_type: 'VAEDecode', inputs: { samples: ['5', 0], vae: ['1', 2] } },
     7: {
       class_type: 'SaveImage',
-      inputs: { images: ['6', 0], filename_prefix: 'easy-paint-sdxl' },
+      inputs: { images: ['6', 0], filename_prefix: 'Easy Paint/easy-paint-sdxl' },
     },
   })
 
@@ -876,7 +886,7 @@ function buildSdxlEditWorkflow(cfg, args, imageNames) {
     7: { class_type: 'VAEDecode', inputs: { samples: ['6', 0], vae: ['1', 2] } },
     8: {
       class_type: 'SaveImage',
-      inputs: { images: ['7', 0], filename_prefix: 'easy-paint-sdxl-edit' },
+      inputs: { images: ['7', 0], filename_prefix: 'Easy Paint/easy-paint-sdxl-edit' },
     },
   })
 
@@ -1208,7 +1218,7 @@ function buildQwenEditWorkflow(cfg, args, imageNames) {
       },
     },
     8: { class_type: 'VAEDecode', inputs: { samples: ['7', 0], vae: ['3', 0] } },
-    9: { class_type: 'SaveImage', inputs: { images: ['8', 0], filename_prefix: 'easy-paint-edit' } },
+    9: { class_type: 'SaveImage', inputs: { images: ['8', 0], filename_prefix: 'Easy Paint/easy-paint-edit' } },
   }
 
   // 每张参考图挂一个 LoadImage，接进 TextEncodeQwenImageEditPlus 的 imageN
@@ -1303,7 +1313,7 @@ function buildZImageWorkflow(cfg, args) {
   prompt[11] = { class_type: 'VAEDecode', inputs: { samples: ['7', 0], vae: ['3', 0] } }
   prompt[12] = {
     class_type: 'SaveImage',
-    inputs: { images: ['11', 0], filename_prefix: 'easy-paint-zimage' },
+    inputs: { images: ['11', 0], filename_prefix: 'Easy Paint/easy-paint-zimage' },
   }
 
   return { width, height, steps, cfgScale, seed, prompt }
@@ -1348,7 +1358,7 @@ function buildZImageEditWorkflow(cfg, args, imageNames) {
   prompt[11] = { class_type: 'VAEDecode', inputs: { samples: ['7', 0], vae: ['3', 0] } }
   prompt[12] = {
     class_type: 'SaveImage',
-    inputs: { images: ['11', 0], filename_prefix: 'easy-paint-zimage-edit' },
+    inputs: { images: ['11', 0], filename_prefix: 'Easy Paint/easy-paint-zimage-edit' },
   }
 
   return { width, height, steps, cfgScale, seed, denoise, edit: true, refCount: 1, prompt }
@@ -1394,7 +1404,7 @@ function buildQwenWorkflow(cfg, args) {
         },
       },
       8: { class_type: 'VAEDecode', inputs: { samples: ['7', 0], vae: ['3', 0] } },
-      9: { class_type: 'SaveImage', inputs: { images: ['8', 0], filename_prefix: 'easy-paint' } },
+      9: { class_type: 'SaveImage', inputs: { images: ['8', 0], filename_prefix: 'Easy Paint/easy-paint' } },
     },
   }
 }
@@ -1804,19 +1814,23 @@ async function runWorkflow(baseUrl, prompt, { timeoutMs, signal }) {
   }
 }
 
-async function saveImage(baseUrl, image, outputDir) {
-  const query = new URLSearchParams({
-    filename: String(image.filename ?? ''),
-    subfolder: String(image.subfolder ?? ''),
-    type: String(image.type ?? 'output'),
-  })
-  const res = await comfyFetch(`${baseUrl}/view?${query}`, {}, 60000)
-  const buffer = Buffer.from(await res.arrayBuffer())
-  await mkdir(outputDir, { recursive: true })
-  const stamp = new Date().toISOString().replace(/[:.]/gu, '-').slice(0, 19)
-  const file = join(outputDir, `easy-paint-${stamp}-${image.filename ?? 'out.png'}`)
-  await writeFile(file, buffer)
-  return file
+/**
+ * 把 ComfyUI 返回的图片描述换算成本地绝对路径，不下载、不写文件。
+ *
+ * image 是 ComfyUI 在 SaveImage 完成后回传的对象：
+ *   { filename, subfolder, type }
+ * 实际位置 = <ComfyUI 根>/<type>/<subfolder>/<filename>
+ *
+ * 插件不再把这个文件复制一份 —— 图本来就已经在硬盘上了（而且就是用户能
+ * 直接打开的那个位置），再写一份既浪费空间，又让 DSH 每次都要放行写权限。
+ */
+function saveImage(image, cfg) {
+  const root = comfyRoot(cfg)
+  if (root === '') return ''
+  const type = String(image.type ?? 'output')
+  const sub = String(image.subfolder ?? '').replace(/^[/\\]+|[/\\]+$/gu, '')
+  const name = String(image.filename ?? 'out.png')
+  return sub === '' ? join(root, type, name) : join(root, type, sub, name)
 }
 
 /* ------------------------------------------------------------------ 入口 ---- */
@@ -1944,7 +1958,6 @@ async function generateImageUnlocked(args, exec) {
         }
 
         const timeoutMs = Math.max(Number(cfg.timeoutMs) || 600000, 30000)
-        const outputDir = resolveOutputDir(cfg)
         const checkMode = String(cfg.selfCheck ?? 'off')
 
         // 自动重试次数：0 = 只出一张；N = 连出 1+N 张（各自不同随机种子）供挑选
@@ -1958,7 +1971,7 @@ async function generateImageUnlocked(args, exec) {
           const workflow = buildOnce()
           lastWorkflow = workflow
           const images = await runWorkflow(baseUrl, workflow.prompt, { timeoutMs, signal: exec?.signal })
-          const file = await saveImage(baseUrl, images[0], outputDir)
+          const file = saveImage(images[0], cfg)
 
           // 图生图的尺寸由参考图决定（VAEEncode 用原图 latent），不是配置的画幅；
           // 这里用实际输出尺寸覆盖，免得工具报告和真实文件对不上
@@ -2309,12 +2322,12 @@ async function generateImageUnlocked(args, exec) {
     try {
       const cfg = currentConfig()
       const folder = resolve(resolveOutputDir(cfg))
-      // 先回响应，再在后台建目录、拉 explorer。
+      // 先回响应，再在后台拉 explorer。
       // explorer.exe 冷启动通常要几百毫秒，等它跑完再响应会让按钮一直转圈；
       // 反正窗口弹出来时请求早就结束了，没必要让前端陪着等。
-      respondJson(res, 200, { ok: true, path: folder })
+      // 这里不 mkdir：目录由 ComfyUI 保存图片时自己建，插件不再碰文件系统。
+      respondJson(res, 200, { ok: true, path: folder, missing: !existsSync(folder) })
       void (async () => {
-        try { await mkdir(folder, { recursive: true }) } catch {}
         try {
           if (process.platform === 'win32') {
             spawn('explorer.exe', [folder], { detached: true, stdio: 'ignore' }).unref()

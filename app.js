@@ -108,7 +108,7 @@ const zh = {
   quickRevealFailed: '打不开文件夹',
   quickClosePreview: '关闭预览',
 
-  outputDirPlaceholder: '留空则用 桌面\\Easy Paint',
+  outputDirPlaceholder: '',
   quickFailed: '出图失败',
   foldQwen: 'Qwen 设置',
   foldQwenHint: 'Qwen-Image 分离式三件套（diffusion_models + text_encoders + vae）',
@@ -157,7 +157,8 @@ const zh = {
   loraMismatchTitle: '这个 LoRA 是为 {lora} 训练的，当前 Checkpoint 属于 {cp}。混用效果会打折。',
   loraStrengthHint: '权重 0–2，0.8 常用',
   outputDir: '输出目录',
-  outputDirHint: '留空则用 桌面\\Easy Paint。',
+  outputDirHint: '图片存在 ComfyUI 的 output\\Easy Paint\\ 下，由 ComfyUI 直接保存，这里只读。',
+    outputDirUnset: '还没选 ComfyUI 路径',
   gpu: '显卡',
   vram: '显存',
   hwUnknown: '未检测到（ComfyUI 运行后自动获取）',
@@ -298,7 +299,7 @@ const en = {
   quickRevealFailed: 'Could not open the folder',
   quickClosePreview: 'Close preview',
 
-  outputDirPlaceholder: 'Empty uses Desktop\\Easy Paint',
+  outputDirPlaceholder: '',
   quickFailed: 'Render failed',
   foldQwen: 'Qwen',
   foldQwenHint: 'Qwen-Image split files (diffusion_models + text_encoders + vae)',
@@ -347,7 +348,8 @@ const en = {
   loraMismatchTitle: 'This LoRA was trained for {lora}, but the current Checkpoint is {cp}. Mixing them weakens the effect.',
   loraStrengthHint: 'Weight 0-2, 0.8 is typical',
   outputDir: 'Output directory',
-  outputDirHint: 'Empty uses Desktop\\Easy Paint.',
+  outputDirHint: 'Images are saved by ComfyUI into output\\Easy Paint\\; this path is read-only.',
+    outputDirUnset: 'ComfyUI path not set yet',
   gpu: 'GPU',
   vram: 'VRAM',
   hwUnknown: 'Not detected (available once ComfyUI runs)',
@@ -1408,6 +1410,13 @@ const openOutputDir = React.useCallback(() => {
   void fetch(API_OPEN_OUTPUT, { method: 'POST' }).catch(() => {})
   window.setTimeout(() => setOpeningOutput(false), 200)
 }, [])
+
+// 输出目录是只读展示：图片由 ComfyUI 直接存到 <ComfyUI>/output/Easy Paint/，
+// 路径从已配置的 ComfyUI 根目录推出来，插件不参与决定。
+const outputDirShown = React.useMemo(() => {
+  const root = typeof draft.comfyWorkdir === 'string' ? draft.comfyWorkdir.trim() : ''
+  return root === '' ? t('outputDirUnset') : `${root}\\output\\Easy Paint`
+}, [draft.comfyWorkdir, t])
   const toggleFold = React.useCallback((key) => {
     setOpenFolds((prev) => ({ ...prev, [key]: !prev[key] }))
   }, [])
@@ -2045,13 +2054,14 @@ const openOutputDir = React.useCallback(() => {
         h('div', { className: 'qwd-hint qwd-hint-one-line', title: t('outputDirHint') }, t('outputDirHint')),
       ),
       h('div', { className: 'qwd-input-embedded' },
+        // 只读：图片存在 ComfyUI 自己的 output\Easy Paint\ 下，由工作流决定，
+        // 不在这里改。显示出来只是让用户知道去哪找。
         h('input', {
           className: 'qwd-input',
           type: 'text',
-          placeholder: t('outputDirPlaceholder'),
-          value: draft.outputDir ?? '',
-          disabled,
-          onChange: (event) => patch('outputDir', event.target.value),
+          readOnly: true,
+          value: outputDirShown,
+          title: outputDirShown,
         }),
         h('button', {
           type: 'button',
