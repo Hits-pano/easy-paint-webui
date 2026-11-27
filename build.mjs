@@ -269,10 +269,11 @@ if (!noUpx) {
 /* -------------------------------------------------------- 输出 ---- */
 
 step('完成')
-// 成品放在源码目录的上一级：这里是与源码分开的构建产物目录，
-// 双击上级的 EasyPaint.exe 就能用。exe 不入 git（见 .gitignore），
-// GitHub 上通过 Release 附件分发。
-const finalExe = join(HERE, '..', 'EasyPaint.exe')
+// 成品放在源码目录的上一级，文件名带版本号：EasyPaint-1.0.1.exe
+// 版本号来自 package.json，改版本就改那一行。
+// exe 不入 git（见 .gitignore），GitHub 上通过 Release 附件分发。
+const pkg = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8'))
+const finalExe = join(HERE, '..', `EasyPaint-${pkg.version}.exe`)
 copyFileSync(target, finalExe)
 ok(`${finalExe}`)
 ok(`${(statSync(finalExe).size / 1024 / 1024).toFixed(2)} MB`)

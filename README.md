@@ -55,7 +55,7 @@
 
 先手动启动一次，确认浏览器能打开 `http://127.0.0.1:8188`。
 
-### 2. 双击 `EasyPaint.exe`
+### 2. 双击 `EasyPaint-<版本>.exe`
 
 浏览器自动打开界面。**没有黑框，不需要装任何东西。**
 
@@ -211,13 +211,14 @@ node sync.mjs --build   # 需要 build-tools/ 完整
 
 ```
 easy-paint-webui/
-├─ EasyPaint.exe          成品（双击这个）
+├─ EasyPaint-1.0.1.exe    成品（双击这个，文件名带版本号）
 ├─ app.js                 前端界面（sync 生成，别直接改）
 ├─ backend.js             后端逻辑（sync 生成，别直接改）
 ├─ index.html             页面壳
 ├─ vendor/                React 18 UMD
 ├─ sync.mjs               从插件源同步 app.js / backend.js
 ├─ build.mjs              打包成 exe
+├─ package.json           版本号（决定产物文件名）
 ├─ build-tools/           打包工具（图标、UPX、postject、脚本）
 └─ LICENSE
 ```
@@ -253,8 +254,9 @@ node.exe (89.2 MB)
 exe 是 GUI 程序，不弹控制台窗口。检查端口是否被占用：
 
 ```bat
+:: 把文件名换成实际下载的那个
 set EASY_PAINT_PORT=7861
-EasyPaint.exe
+EasyPaint-1.0.1.exe
 ```
 
 **Q：浏览器打开是白屏？**
@@ -267,7 +269,7 @@ EasyPaint.exe
 
 **Q：能不能给别人用？**
 
-可以。把 `EasyPaint.exe` 单独复制过去就行 —— 它是单文件，不需要其他任何东西。对方需要装 ComfyUI 和有浏览器。
+可以。把下载的 exe 单独复制过去就行 —— 它是单文件，不需要其他任何东西（Release 附件里的文件名是 `EasyPaint.exe`，本地构建的是 `EasyPaint-<版本>.exe`，两个是同一个程序）。对方需要装 ComfyUI 和有浏览器。
 
 **Q：和插件版能同时用吗？**
 
