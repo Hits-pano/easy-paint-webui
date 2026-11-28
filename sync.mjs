@@ -191,8 +191,10 @@ while (i < ix.length) {
     continue
   }
 
-  // 末尾 webServer 注册段：从这里截断
-  if (/\/\/ webServer 是可选服务/.test(line)) {
+  // 末尾 webServer 注册段：从这里截断。
+  // 锚点跟着插件源一起变——插件那边改成同步注册后注释也换了，
+  // 这里两种写法都认，免得下次再对不上。
+  if (/\/\/ 设置页要用的 HTTP 路由/.test(line) || /\/\/ webServer 是可选服务/.test(line)) {
     cutAt = i + 1
     ok(`截断于 L${cutAt}（webServer 注册段）`)
     break

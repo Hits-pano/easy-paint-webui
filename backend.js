@@ -19,6 +19,10 @@ import net from 'node:net'
 import { homedir } from 'node:os'
 import { dirname, basename, join, resolve, relative } from 'node:path'
 
+// webServer 必须声明在这里：Cordis 只会在 inject 列出的服务就绪后才执行 apply，
+// 也只有列出来的服务才能被 ctx.inject() 等待到。原先只写了 'tools'，又用
+// ctx.inject(['webServer']) 去等——回调永远不触发，设置页的路由一个都没注册上，
+// 前端拿到的就是 HTTP 404。
 
 /** 画幅 → 像素。边长均为 16 的倍数，总像素贴近 1MP。 */
 /** 画幅预设：SDXL 与 Qwen 共用同一套比例 */
@@ -1941,6 +1945,9 @@ export function createApp(ctx, rawConfig) {
 
   // 出图自检依赖的服务：attachments 用于把图存成可引用的附件，llm 用于视觉检查。
   // 两者都可能不存在（profile 差异），缺了就降级跳过，不影响出图本身。
+  // attachments / llm 不写进 inject：它们是「有就用、没有就降级」的服务。
+  // 用 ctx.inject() 的回调形式等待——这两个服务在 dsh-web-app 里一定有，
+  // 等到了就填进去，等不到则自检和识图走「缺服务」分支，出图不受影响。
   const checkServices = { attachments: null, llm: null }
   // 独立版没有 DSH 的 attachments / llm 服务，视觉自检降级跳过
   /** 自检进行中标记：出图已完成但还在检查，状态座据此显示「自检中」。 */
@@ -2132,7 +2139,8 @@ async function generateImageUnlocked(args, exec) {
           seeds: shots.map((shot) => shot.seed),
           checks: shots.map((shot) => shot.selfCheck),
             // 自检未通过那些图的附件引用：render 用它把图贴出来；没有失败项就是 null。
-            previews: shots.map((shot) => shot.preview),
+            // 没有预览的项用空对象占位——schema 声明的是 array of object，灌 null 会校验不过
+            previews: shots.map((shot) => shot.preview ?? {}),
           width: lastWorkflow.width,
           height: lastWorkflow.height,
           steps: lastWorkflow.steps,

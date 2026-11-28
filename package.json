@@ -1,6 +1,6 @@
 {
   "name": "easy-paint-webui",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "给 ComfyUI 用的简易出图界面 · 双击即用，不需要安装任何东西",
   "license": "MIT",
