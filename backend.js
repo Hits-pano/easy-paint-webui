@@ -2098,7 +2098,22 @@ async function generateImageUnlocked(args, exec) {
             }
           }
 
-          shots.push({ path: file, seed: workflow.seed, selfCheck, selfCheckSeconds })
+          // 自检没过：把这张图存成附件，让 render 能直接贴在对话里。
+          // render 是同步的、存附件是异步的，所以在这里（还能 await）先备好。
+          let preview = null
+          if (selfCheck.mode !== 'off' && selfCheck.ok === false && checkServices.attachments) {
+            try {
+              const buf = outputBuffer ?? await readFile(file)
+              const refs = await checkServices.attachments.saveImages([{
+                data: buf, mediaType: 'image/png', name: basename(file),
+              }])
+              preview = refs[0] ?? null
+            } catch {
+              // 存附件失败不影响出图，只是这次没法自动贴图
+            }
+          }
+
+          shots.push({ path: file, seed: workflow.seed, selfCheck, selfCheckSeconds, preview })
           // 多张之间留一点间隔，避免把 ComfyUI 队列挤爆
           if (index + 1 < total) await sleep(300)
         }
@@ -2116,6 +2131,8 @@ async function generateImageUnlocked(args, exec) {
           paths: shots.map((shot) => shot.path),
           seeds: shots.map((shot) => shot.seed),
           checks: shots.map((shot) => shot.selfCheck),
+            // 自检未通过那些图的附件引用：render 用它把图贴出来；没有失败项就是 null。
+            previews: shots.map((shot) => shot.preview),
           width: lastWorkflow.width,
           height: lastWorkflow.height,
           steps: lastWorkflow.steps,
