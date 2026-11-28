@@ -33,13 +33,25 @@ const SIZE_PRESETS = {
 }
 
 /**
- * 取出本次要用的种子：调用方传了就取整用，没传就随机。
- * 四个工作流构建函数共用，避免同一段逻辑抄四遍。
+ * 取出本次要用的种子。
+ *
+ * 调用方传了就用，否则随机。但传进来的值必须先夹进 ComfyUI 能接受的区间：
+ * KSampler 要求 0 ≤ seed ≤ 2^50-1，负数或超界的值会被它直接拒绝
+ * （"seed 不能为负数"之类的报错），整次出图就白跑了。
+ * 与其让用户看到一个底层报错，不如在这里收好。
  */
+const SEED_MAX = 1125899906842623 // 2^50 - 1，ComfyUI KSampler 的上界
+
 function resolveSeed(args) {
   const raw = Number(args?.seed)
-  if (Number.isFinite(raw)) return Math.trunc(raw)
-  return Math.floor(Math.random() * 1e15)
+  if (Number.isFinite(raw)) {
+    const n = Math.trunc(raw)
+    // 负数和超界一律夹回来，不让它们流到 ComfyUI
+    if (n < 0) return 0
+    if (n > SEED_MAX) return SEED_MAX
+    return n
+  }
+  return Math.floor(Math.random() * (SEED_MAX + 1))
 }
 
 /**
@@ -328,75 +340,90 @@ const VISION_CHECK_PROMPT = (prompt) => [
 ].join('\n')
 
 /**
+ * 把一张图交给配置的视觉模型，返回模型输出的纯文本与结束原因。
+ *
+ * 视觉自检和 describe_image 两处都要走这条路：存附件 → 塞进 messages →
+ * 读 stream → 收 finish。区别只在提示词和怎么用返回的文字，所以抽出来一份。
+ *
+ * 出错就抛，调用方自己决定怎么降级（自检是跳过，识图是直接报错）。
+ */
+async function runVision(services, buffer, fileName, promptText, opts) {
+  const store = services.attachments
+  const llm = services.llm
+  if (!store || !llm) {
+    throw new Error('当前 profile 缺少 attachments / llm 服务')
+  }
+  const { provider, model, maxTokens = 400, temperature = 0.1 } = opts
+
+  const refs = await store.saveImages([{ data: buffer, mediaType: 'image/png', name: fileName }])
+  const ref = refs[0]
+
+  let text = ''
+  let finishKind = ''
+  let finishFailure = ''
+  for await (const chunk of llm.stream({
+    provider,
+    model,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: promptText },
+        { type: 'image', attachment: ref },
+      ],
+    }],
+    maxTokens,
+    temperature,
+    signal: AbortSignal.timeout(90000),
+  })) {
+    if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
+      text += chunk.text
+    } else if (chunk?.type === 'finish') {
+      // FinishReason 是对象（{kind:'stop'} 之类），不是字符串
+      const reason = chunk.reason
+      if (reason !== null && typeof reason === 'object') {
+        finishKind = String(reason.kind ?? '')
+        if (reason.failure !== undefined) finishFailure = JSON.stringify(reason.failure).slice(0, 200)
+      } else {
+        finishKind = String(reason ?? '')
+      }
+    }
+  }
+
+  // 真正的中断才直接放弃；max-tokens 仍交给调用方解析已有内容
+  if (finishKind === 'error' || finishKind === 'aborted') {
+    const detail = finishFailure === '' ? '' : '（' + finishFailure + '）'
+    // xxx-vision 是识图插件生成的包装路由，失败最常见的原因是它依赖的上游没起
+    const twin = provider.endsWith('-vision')
+    throw new Error(twin
+      ? provider + ' 是识图包装路由，但后端没有响应——检查该模型的 DSH 配置与上游服务，或改用不带 -vision 的模型' + detail
+      : '模型调用中断（' + finishKind + '）' + detail)
+  }
+
+  return { text, finishKind }
+}
+
+/**
  * 视觉自检：把图存成 DSH 附件 → 连同提示词交给配置的视觉模型 → 解析 JSON 结论。
  * 需要 attachments + llm 两个服务；任一缺失则返回跳过原因。
  */
 async function visionCheck(services, buffer, prompt, cfg) {
-  const store = services.attachments
-  const llm = services.llm
-  if (!store || !llm) {
-    return { mode: 'vision', ok: true, skipped: true, issues: ['当前 profile 缺少 attachments / llm 服务，跳过视觉自检'] }
-  }
   const provider = String(cfg.selfCheckProvider ?? '').trim()
   const model = String(cfg.selfCheckModel ?? '').trim()
   if (provider === '' || model === '') {
     return { mode: 'vision', ok: true, skipped: true, issues: ['未配置视觉自检模型（provider / model 为空）'] }
   }
 
-  let ref
-  try {
-    const refs = await store.saveImages([{ data: buffer, mediaType: 'image/png', name: 'easy-paint-selfcheck.png' }])
-    ref = refs[0]
-  } catch (error) {
-    return { mode: 'vision', ok: true, skipped: true, issues: [`图片存入附件失败：${error?.message ?? error}`] }
-  }
-
+  // 自检是锦上添花：任何失败都只记进 issues，绝不影响出图本身
   let text = ''
   let finishKind = ''
-  let finishFailure = ''
   try {
-    for await (const chunk of llm.stream({
-      provider,
-      model,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'text', text: VISION_CHECK_PROMPT(prompt) },
-          { type: 'image', attachment: ref },
-        ],
-      }],
-      maxTokens: 400,
-      temperature: 0.1,
-      signal: AbortSignal.timeout(90000),
-    })) {
-      if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
-        text += chunk.text
-      } else if (chunk?.type === 'finish') {
-        // FinishReason 是对象（{kind:'stop'} 之类），不是字符串
-        const reason = chunk.reason
-        if (reason !== null && typeof reason === 'object') {
-          finishKind = String(reason.kind ?? '')
-          if (reason.failure !== undefined) finishFailure = JSON.stringify(reason.failure).slice(0, 200)
-        } else {
-          finishKind = String(reason ?? '')
-        }
-      }
-    }
+    const r = await runVision(services, buffer, 'easy-paint-selfcheck.png', VISION_CHECK_PROMPT(prompt), {
+      provider, model, maxTokens: 400, temperature: 0.1,
+    })
+    text = r.text
+    finishKind = r.finishKind
   } catch (error) {
-    return { mode: 'vision', ok: true, skipped: true, issues: [`视觉检查调用失败：${error?.message ?? error}`] }
-  }
-
-  // 真正的中断才直接放弃；max-tokens 仍尝试解析已有内容
-  if (finishKind === 'error' || finishKind === 'aborted') {
-    const detail = finishFailure === '' ? '' : `（${finishFailure}）`
-    // xxx-vision 是识图插件生成的包装路由，失败最常见的原因是它依赖的上游没起
-    const twin = provider.endsWith('-vision')
-    return {
-      mode: 'vision', ok: true, skipped: true,
-      issues: [twin
-        ? `${provider} 是识图包装路由，但后端没有响应——检查该模型的 DSH 配置与上游服务，或改用不带 -vision 的模型${detail}`
-        : `模型调用中断（${finishKind}）${detail}`],
-    }
+    return { mode: 'vision', ok: true, skipped: true, issues: [error?.message ?? String(error)] }
   }
 
   // 宽容解析：模型可能包了 ```json 或有前后缀文字
@@ -1455,9 +1482,20 @@ async function flushComfyCache(baseUrl) {
   }
 }
 
-async function checkComfy(baseUrl) {
+/**
+ * 探活：ComfyUI 的 /system_stats 能不能通。
+ *
+ * 超时给到 30 秒而不是几秒 —— 出图期间 ComfyUI 在跑采样，HTTP 线程要排队，
+ * 实测忙的时候 /system_stats 可能 10 秒以上才回。原来卡 8 秒，出图中轮询
+ * 状态就会误判成「离线」，然后插件去重启 ComfyUI，端口又被旧进程占着，
+ * 最后报一个和真实原因无关的错。
+ *
+ * busy=true 时再放宽一档：宁可多等，也不要在出图中间误报掉线。
+ */
+async function checkComfy(baseUrl, { busy = false } = {}) {
+  const timeoutMs = busy ? 45000 : 30000
   try {
-    const res = await comfyFetch(`${baseUrl}/system_stats`, {}, 8000)
+    const res = await comfyFetch(`${baseUrl}/system_stats`, {}, timeoutMs)
     const data = await res.json()
     return {
       online: true,
@@ -1521,6 +1559,9 @@ function resolveRefLimit(cfg, hardware) {
 /** 出图前的探活缓存：一次启动尝试同时服务多个并发请求，避免拉起两三个 ComfyUI。 */
 let launching = false
 let lastStartError = ''
+// 上一次出图任务的错误（不是启动错误）。和 lastStartError 分开存：
+// 任务失败时 ComfyUI 明明在线，不该让用户以为服务掉了。
+let lastTaskError = ''
 
 /** 当前任务的实时进度，供 status 端点读取；空闲时为 null。 */
 let liveProgress = null
@@ -1788,6 +1829,11 @@ async function runWorkflow(baseUrl, prompt, { timeoutMs, signal }) {
 
   try {
     const deadline = Date.now() + timeoutMs
+    // 连续多少次查不到 /history 就认定服务挂了。原来是无限 continue：
+    // ComfyUI 卡死时一路吞错等到总超时（10 分钟），对话那边就一直干等。
+    // 连不上 3 次（约 45 秒）基本可以确定不是「任务慢」而是「服务没了」。
+    const MAX_PROBE_FAILS = 3
+    let probeFails = 0
     while (Date.now() < deadline) {
       if (signal?.aborted) throw new Error('已取消')
       await new Promise((resolve) => setTimeout(resolve, 1000))
@@ -1795,7 +1841,15 @@ async function runWorkflow(baseUrl, prompt, { timeoutMs, signal }) {
       try {
         const hr = await comfyFetch(`${baseUrl}/history/${promptId}`, {}, 15000)
         history = await hr.json()
-      } catch {
+        probeFails = 0
+      } catch (error) {
+        probeFails += 1
+        if (probeFails >= MAX_PROBE_FAILS) {
+          throw new Error(
+            `出图中途连不上 ComfyUI（连续 ${probeFails} 次查不到任务状态）：${error?.message ?? error}。`
+              + ' 任务可能已中断——确认 ComfyUI 还活着后重新出图即可。',
+          )
+        }
         continue
       }
       const entry = history?.[promptId]
@@ -1918,8 +1972,14 @@ async function generateImage(args, exec) {
     )
   }
   drawBusy = true
+  lastTaskError = ''
   try {
     return await generateImageUnlocked(args, exec)
+  } catch (error) {
+    // 只记「任务本身」的失败。ComfyUI 在线但节点报错、超时、模型没配，
+    // 这些都不等于服务掉线，状态座要能如实区分。
+    lastTaskError = String(error?.message ?? error)
+    throw error
   } finally {
     drawBusy = false
     // 不管成功还是失败，都要把「忙」的状态清掉。
@@ -2076,6 +2136,65 @@ async function generateImageUnlocked(args, exec) {
 }
 
   // 独立版没有对话工具，不注册 draw_image；出图走下面的 HTTP 端点。
+  // ---------------------------------------------------------------- 识图 ----
+
+  /**
+   * 让配置的视觉模型描述一张图，返回文字。
+   *
+   * 为什么需要：图生图的参考图是交给 ComfyUI 处理的，本来和对话模型能不能
+   * 看图无关。但用户把图片贴进对话时，DSH 会先把它交给对话模型 —— 非多模态
+   * 模型在这一步就被拦下，插件根本没有机会拿到路径。
+   *
+   * 所以补一条「看图转文字」的通道：把参考图交给设置页里配好的识图模型，
+   * 拿回一段描述，对话模型据此拼出提示词再调 draw_image。整条链路上只有
+   * 这一步需要视觉能力，而它由插件自己保证。
+   */
+  async function describeImage(args) {
+    const cfg = currentConfig()
+    const provider = String(cfg.selfCheckProvider ?? '').trim()
+    const model = String(cfg.selfCheckModel ?? '').trim()
+    if (provider === '' || model === '') {
+      throw new Error(
+        '还没配置视觉模型。请到 DSH 设置 → Easy Paint → 生图参数设置，'
+        + '在「选择视觉模型」里选一个——识图和出图自检共用这个模型。',
+      )
+    }
+
+    const file = String(args?.path ?? '').trim()
+    if (file === '') throw new Error('path 不能为空')
+    if (!existsSync(file)) throw new Error('图片不存在：' + file)
+    const buffer = await readFile(file)
+
+    const ask = String(args?.question ?? '').trim()
+    const instruction = ask === ''
+      ? [
+          '请客观描述这张图片，供另一个人据此改写它。必须覆盖以下五点：',
+          '1. 主体（人物或物体）及其位置、朝向、姿态；',
+          '2. 画风与媒介（写实 / 卡通 / 水彩 / 像素等）、色调与光线；',
+          '3. 背景与构图（近景 / 中景 / 远景、镜头角度、画面比例）；',
+          '4. 画面里出现的所有文字，原样抄下来；',
+          '5. 需要保留的细节（服饰、道具、表情）。',
+          '只输出描述本身，不要客套话。',
+        ].join('\n')
+      : ask
+
+    // 识图失败要明确报出来（不像自检那样静默跳过）：调用方拿不到描述就没法继续
+    const { text } = await runVision(checkServices, buffer, basename(file), instruction, {
+      provider, model, maxTokens: 900, temperature: 0.2,
+    })
+
+    const out = text.trim()
+    if (out === '') {
+      const twin = provider.endsWith('-vision')
+      throw new Error(twin
+        ? provider + ' 是识图包装路由但没有返回内容。检查该模型的上游服务，或换一个模型。'
+        : '识图模型没有返回内容')
+    }
+    return { text: out, provider, model, path: file }
+  }
+
+  // 独立版没有对话工具，不注册 draw_image；出图走下面的 HTTP 端点。
+
 
   /* ---------------------------------------------------- 设置页用 HTTP 端点 ---- */
 
@@ -2103,9 +2222,15 @@ async function generateImageUnlocked(args, exec) {
         const body = await readJsonBody(req)
         const incoming = sanitize(body?.config ?? body ?? {})
         const next = { ...fileConfig, ...incoming }
-        // 非 vision 模式不保存视觉模型字段。留着会让人在配置里看到模型名，
-        // 误以为轻量自检也会调云端 API 花钱。
-        if (next.selfCheck !== 'vision') {
+        // 只有「明确把自检关掉」时才清掉视觉模型字段，避免配置里留着一串模型名，
+        // 让人误以为轻量自检也会调模型。
+        //
+        // ★ 不能写成「next.selfCheck 不是 vision 就删」：选视觉模型时前端分两次提交
+        //   （先 provider、再 model），两次请求里 selfCheck 都还是旧值 off，一进来就被
+        //   删掉，用户看到的就是「选了模型又自动弹回不自检」。
+        //   改成只在这次请求真的把 selfCheck 设成非 vision 时才清。
+        const turningOff = incoming.selfCheck !== undefined && incoming.selfCheck !== 'vision'
+        if (turningOff) {
           delete next.selfCheckProvider
           delete next.selfCheckModel
         }
@@ -2134,7 +2259,9 @@ async function generateImageUnlocked(args, exec) {
     }
     const cfg = currentConfig()
     const baseUrl = String(cfg.comfyUrl ?? DEFAULTS.comfyUrl).replace(/\/+$/u, '')
-    const health = await checkComfy(baseUrl)
+    // 正在出图（busySince 有值）就把探活超时放宽：采样期间 /system_stats 排队很慢，
+    // 按空闲时的超时去判，出图中盘一半会被误报成「离线」。
+    const health = await checkComfy(baseUrl, { busy: busySince > 0 })
     // 在线时顺手刷新硬件快照，离线时沿用上次的（设置页仍能显示机器信息）
     if (health.online) {
       const hw = readHardware(health.devices)
@@ -2182,6 +2309,9 @@ async function generateImageUnlocked(args, exec) {
       // 进度样式固定为填充，不再下发
       // 离线时把上次启动失败的原因带出去，状态座的 tooltip 能显示
       lastError: health.online ? '' : lastStartError,
+      // 在线时也要能告诉用户「上一次出图为什么失败」——
+      // 这类错误（节点异常、显存不足、参数不对）和服务掉线是两回事
+      taskError: health.online ? lastTaskError : '',
       // 机器信息与参考图上限（设置页展示用）
       hardware: hardwareCache,
       refLimit: resolveRefLimit(cfg, hardwareCache),
@@ -2222,7 +2352,8 @@ async function generateImageUnlocked(args, exec) {
       const args = { prompt }
       if (typeof body?.image === 'string' && body.image.trim() !== '') args.image = body.image.trim()
       if (Array.isArray(body?.images)) args.images = body.images.filter((x) => typeof x === 'string')
-      if (Number.isFinite(Number(body?.seed))) args.seed = Math.trunc(Number(body.seed))
+      // 原样传进去，负数/超界由 resolveSeed 统一夹进合法区间
+      if (Number.isFinite(Number(body?.seed))) args.seed = Number(body.seed)
       const result = await generateImage(args)
       respondJson(res, 200, { ok: true, ...result })
     } catch (error) {

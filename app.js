@@ -164,12 +164,11 @@ const zh = {
   vram: '显存',
   hwUnknown: '未检测到（ComfyUI 运行后自动获取）',
   barTitle: 'ComfyUI 状态',
-  selfCheckMode: '自检强度',
-  selfCheckHint: '出图后自动检查画面，失败只提示、不丢图、也不会自动重画。开启「视觉」后会用所选模型看一次图，选云端 API 时每张图和重试都会各计一次费。',
-  selfCheckOff: '不自检（直接出图）',
-  selfCheckVision: '视觉自检（用模型看图，可能产生费用）',
-  visionModel: '检查用模型',
-  visionModelHint: '只列出 DSH 里声明支持图片输入的模型。选远程 API 模型时，每出一张图就是一次调用，开自动重试时按张数累加。',
+  visionModelPick: '选择视觉模型',
+visionModelPickHint: '可以选择图生图和自检用的视觉模型，留空可能导致图生图和自检功能不可用',
+visionModelEmpty: '（空）',
+selfCheckToggle: '出图后自检',
+selfCheckToggleHint: '用上面选的模型检查画面，失败只提示、不丢图、不自动重画',
   visionCostWarning: '⚠ 视觉自检会用下方所选模型真的看一次图。如果选的是云端 API 模型，每张图都会产生一次调用费用；开自动重试时按张数翻倍。用不按次计费的模型则不产生额外费用。',
   visionModelNone: '没有找到支持图片输入的模型（需在 DSH 的模型配置里声明 input: image）',
   visionModelLoading: '正在读取可用模型…',
@@ -349,12 +348,11 @@ const en = {
   vram: 'VRAM',
   hwUnknown: 'Not detected (available once ComfyUI runs)',
   barTitle: 'ComfyUI status',
-  selfCheckMode: 'Check level',
-  selfCheckHint: 'Inspects the image afterwards; a failed check only warns — the image is kept and nothing is redrawn automatically. Vision calls the selected model once per image; cloud APIs bill per call.',
-  selfCheckOff: 'None (use the image directly)',
-  selfCheckVision: 'Vision (model looks at it — may cost money)',
-  visionModel: 'Check model',
-  visionModelHint: 'Lists only models that declare image input in DSH. Remote API models are billed per call — one call per generated image, multiplied when auto-retry is on.',
+  visionModelPick: 'Vision model',
+visionModelPickHint: 'The model used for image-to-image and post-check. Leave empty and both may be unavailable.',
+visionModelEmpty: '(none)',
+selfCheckToggle: 'Check after drawing',
+selfCheckToggleHint: 'Inspect the image with the model above; a failed check only warns — the image is kept, nothing is redrawn',
   visionCostWarning: '⚠ Vision check really calls the selected model once per image. With a cloud API model this costs money every generation, multiplied by auto-retry count. Models that are not billed per call incur no extra cost.',
   visionModelNone: 'No image-capable model found (set input: image in the DSH model config)',
   visionModelLoading: 'Loading available models…',
@@ -1230,7 +1228,7 @@ function Fold(props) {
 }
 
 function Field(props) {
-  const { label, hint, value, onChange, onBlur, disabled, narrow, type, invalid, warn, warnText, placeholder } = props
+  const { label, hint, value, onChange, onBlur, disabled, narrow, type, invalid, warn, warnText, placeholder, step, min, max } = props
   /**
    * 结构必须恒定：外层永远是 .qwd-field-column，里面永远是「输入行 + 提示行」。
    *
@@ -1247,6 +1245,11 @@ function Field(props) {
       h('input', {
         className: `qwd-input${narrow ? ' qwd-input-narrow' : ''}${invalid === true ? ' qwd-input-invalid' : ''}${warn === true ? ' qwd-input-warn' : ''}`,
         type: type ?? 'text',
+        // step / min / max 原样透传：数字框的上下箭头按 step 走。
+        // 不传就是浏览器默认的 1 —— 图生图强度这种 0~1 的小数只能 ±1，等于没法调。
+        step: step !== undefined ? step : undefined,
+        min: min !== undefined ? min : undefined,
+        max: max !== undefined ? max : undefined,
         value: value ?? '',
         placeholder: placeholder ?? '',
         disabled: disabled === true,
@@ -1357,6 +1360,19 @@ function ModelField(props) {
   )
 }
 
+/**
+ * 折叠面板的展开状态放在模块作用域。
+ *
+ * 原来只存在组件内的 useState 里：DSH 那边只要让设置页重挂一次
+ * （状态轮询、切标签、任何父级重渲染导致的重新挂载），openFolds 就回到
+ * 全 false，用户正开着看的那个面板啪地收起来。
+ * 提到模块级后，重挂也沿用上次的展开状态。
+ */
+const foldState = {
+  basic: false, quick: false, qwen: false, sdxl: false,
+  params: false, advanced: false, appearance: false, zimage: false,
+}
+
 function EasyPaintSettings(props) {
   const t = props.t
   const [config, setConfig] = React.useState(null)
@@ -1392,7 +1408,7 @@ const [comfyBusy, setComfyBusy] = React.useState(false)
 
 
   // 折叠面板：默认全部收起，进来先看目录，按需展开
-  const [openFolds, setOpenFolds] = React.useState({ basic: false, quick: false, qwen: false, sdxl: false, params: false, advanced: false, appearance: false, zimage: false })
+  const [openFolds, setOpenFolds] = React.useState(() => ({ ...foldState }))
 const [openingOutput, setOpeningOutput] = React.useState(false)
 /**
  * 打开配置里的输出目录。
@@ -1413,7 +1429,11 @@ const outputDirShown = React.useMemo(() => {
   return root === '' ? t('outputDirUnset') : `${root}\\output\\Easy Paint`
 }, [draft.comfyWorkdir, t])
   const toggleFold = React.useCallback((key) => {
-    setOpenFolds((prev) => ({ ...prev, [key]: !prev[key] }))
+    setOpenFolds((prev) => {
+      const next = { ...prev, [key]: !prev[key] }
+      foldState[key] = next[key]
+      return next
+    })
   }, [])
 
   // 视觉自检可用的模型来自 DSH 的 llm 服务（只取声明 image 输入的）
@@ -2097,48 +2117,42 @@ const outputDirShown = React.useMemo(() => {
       value: draft.autoRetry ?? 0, disabled,
       onChange: (v) => patch('autoRetry', v),
     }),
+    // 视觉模型：图生图识图和出图自检共用同一个模型。
+    // 始终可见——原来要先切「自检强度」才看得到模型下拉，两件事挤在一个控件里。
     h(SelectField, {
-      label: t('selfCheckMode'), hint: t('selfCheckHint'),
-      value: draft.selfCheck ?? 'off',
+      label: t('visionModelPick'), hint: t('visionModelPickHint'),
+      value: `${draft.selfCheckProvider ?? ''}|${draft.selfCheckModel ?? ''}`,
       options: [
-        { value: 'off', label: t('selfCheckOff') },
-        { value: 'vision', label: t('selfCheckVision') },
+        // 第一项「（空）」清掉模型，图生图识图和自检都会不可用，说明里已讲清
+        { value: '|', label: t('visionModelEmpty') },
+        ...visionModels.map((m) => ({
+          value: `${m.provider}|${m.model}`,
+          label: `${m.name || m.model}（${m.provider}）`,
+        })),
       ],
       disabled,
-      onChange: (v) => { patch('selfCheck', v)},
+      onChange: (v) => {
+        const cut = v.indexOf('|')
+        // 只改 draft，点「保存设置」才写盘——和面板里其它下拉保持一致。
+        // （早先这里额外调过 saveBatch，回包会用服务端已存的值覆盖整个 draft，
+        //   把还没保存的选择一起冲掉，已删除。）
+        patch('selfCheckProvider', v.slice(0, cut))
+        patch('selfCheckModel', v.slice(cut + 1))
+      },
     }),
-    draft.selfCheck === 'vision'
-      ? (visionModels.length > 0
-        ? h(SelectField, {
-          label: t('visionModel'), hint: t('visionModelHint'),
-          value: `${draft.selfCheckProvider ?? ''}|${draft.selfCheckModel ?? ''}`,
-          options: visionModels.map((m) => ({
-            value: `${m.provider}|${m.model}`,
-            label: `${m.name || m.model}（${m.provider}）`,
-          })),
-          disabled,
-          onChange: (v) => {
-            const cut = v.indexOf('|')
-            const provider = v.slice(0, cut)
-            const model = v.slice(cut + 1)
-            patch('selfCheckProvider', provider)
-            patch('selfCheckModel', model)
-            void (async () => {
-              await save('selfCheckProvider', null, provider)
-              await save('selfCheckModel', null, model)
-            })()
-          },
-        })
-        : h('div', { className: 'qwd-field' },
-          h('div', { className: 'qwd-field-text' },
-            h('div', {
-              className: 'qwd-hint qwd-hint-one-line',
-              title: loadingVision ? t('visionModelLoading') : t('visionModelNone'),
-            }, loadingVision ? t('visionModelLoading') : t('visionModelNone')),
-          ),
-        ))
+    visionModels.length === 0
+      ? h('p', { className: 'qwd-hint' },
+          loadingVision ? t('visionModelLoading') : t('visionModelNone'))
       : null,
-    // 视觉自检会调用真实模型：云端按次计费，本地免费。必须让用户看见。
+    // 自检单独一个开关：选了模型不等于每次都自检，
+    // 云端模型每次自检都是一次计费，得让用户自己决定。
+    h(Switch, {
+      label: t('selfCheckToggle'), hint: t('selfCheckToggleHint'),
+      checked: draft.selfCheck === 'vision',
+      disabled,
+      onChange: (on) => { patch('selfCheck', on ? 'vision' : 'off') },
+    }),
+    // 自检会调用真实模型：云端按次计费，本地免费。必须让用户看见。
     draft.selfCheck === 'vision'
       ? h('p', { className: 'qwd-cost-warn' }, t('visionCostWarning'))
       : null,
@@ -2295,14 +2309,14 @@ const outputDirShown = React.useMemo(() => {
       onChange: (v) => patch('sdxlSteps', v),
     }),
     h(Field, {
-      label: t('cfg'), hint: t('sdxlCfgHint'), type: 'number', narrow: true,
+      label: t('cfg'), hint: t('sdxlCfgHint'), type: 'number', narrow: true, step: '0.1',
       value: draft.sdxlCfg ?? 7.5, disabled,
       warn: sdxlCfgWarn,
       warnText: sdxlCfgWarnText || undefined,
       onChange: (v) => patch('sdxlCfg', v),
     }),
     h(Field, {
-      label: t('editDenoise'), hint: t('sdxlEditDenoiseHint'), type: 'number', narrow: true,
+      label: t('editDenoise'), hint: t('sdxlEditDenoiseHint'), type: 'number', narrow: true, step: '0.1', min: '0', max: '1',
       value: draft.sdxlEditDenoise ?? 0.6, disabled,
       onChange: (v) => patch('sdxlEditDenoise', v),
     }),
@@ -2419,14 +2433,14 @@ const outputDirShown = React.useMemo(() => {
       onChange: (v) => patch('qwenSteps', v),
     }),
     h(Field, {
-      label: t('cfg'), hint: t('cfgHint'), type: 'number', narrow: true,
+      label: t('cfg'), hint: t('cfgHint'), type: 'number', narrow: true, step: '0.1',
       value: draft.qwenCfg ?? 2.5, disabled,
       warn: qwenCfgWarn,
       warnText: qwenCfgWarnText || undefined,
       onChange: (v) => patch('qwenCfg', v),
     }),
     h(Field, {
-      label: t('editDenoise'), hint: t('editDenoiseHint'), type: 'number', narrow: true,
+      label: t('editDenoise'), hint: t('editDenoiseHint'), type: 'number', narrow: true, step: '0.1', min: '0', max: '1',
       value: draft.qwenEditDenoise ?? 1, disabled,
       onChange: (v) => patch('qwenEditDenoise', v),
     }),
@@ -2548,14 +2562,14 @@ const outputDirShown = React.useMemo(() => {
       onChange: (v) => patch('zImageSteps', v),
     }),
     h(Field, {
-      label: t('cfg'), hint: t('zimageCfgHint'), type: 'number', narrow: true,
+      label: t('cfg'), hint: t('zimageCfgHint'), type: 'number', narrow: true, step: '0.1',
       value: draft.zImageCfg ?? 1, disabled,
       warn: zCfgWarn,
       warnText: zCfgWarnText || undefined,
       onChange: (v) => patch('zImageCfg', v),
     }),
     h(Field, {
-      label: t('editDenoise'), hint: t('zimageEditDenoiseHint'), type: 'number', narrow: true,
+      label: t('editDenoise'), hint: t('zimageEditDenoiseHint'), type: 'number', narrow: true, step: '0.1', min: '0', max: '1',
       value: draft.zImageEditDenoise ?? 0.6, disabled,
       onChange: (v) => patch('zImageEditDenoise', v),
     }),
@@ -2778,9 +2792,21 @@ const SEAT_STYLE = `
  * ComfyUI 状态轮询 + 启停操作，供状态胶囊和设置页控制条共用。
  * 只负责「状态」和「动作」，二次确认这类交互留在各自的组件里。
  */
+/**
+ * 状态胶囊的跨挂载缓存。
+ *
+ * 切换对话时 ComfyUI 状态胶囊会整个重挂，useState 回到初始值 ——
+ * 原来是 'unknown'，文案是「检测中…」，于是每次切对话都会闪一下，
+ * 等第一次 /status 回来才变成真实状态。
+ *
+ * 把上一次查到的结果放在模块作用域，重挂时直接从缓存起手：
+ * 状态和文字都对得上，不再出现那一下「检测中」。
+ */
+const seatCache = { state: 'unknown', meta: null, enabled: true }
+
 function useComfyControl() {
-  const [state, setState] = React.useState('unknown')
-  const [meta, setMeta] = React.useState({
+  const [state, setState] = React.useState(seatCache.state)
+  const [meta, setMeta] = React.useState(() => seatCache.meta ?? {
     progress: null, busySince: null, lastError: '', version: '', endpoint: '', archLabel: '',
     paramIssues: [], comfy: null, online: false, busy: false,
   })
@@ -2799,7 +2825,7 @@ function useComfyControl() {
         ? (data?.starting ? 'starting' : 'off')
         : (data?.busy ? 'busy' : (data?.checking ? 'checking' : 'on'))
       setState(next)
-      setMeta({
+      const metaSnapshot = {
         progress: data?.progress ?? null,
         busySince: data?.busySince ?? null,
         lastError: typeof data?.lastError === 'string' ? data.lastError : '',
@@ -2824,11 +2850,15 @@ function useComfyControl() {
             valid: data.comfy.valid === true,
           }
           : null,
-      })
+      }
+      setMeta(metaSnapshot)
+      seatCache.state = next
+      seatCache.meta = metaSnapshot
       return next
     } catch {
       setState('off')
       setMeta((prev) => ({ ...prev, progress: null, busySince: null }))
+        seatCache.state = 'off'
       return 'off'
     } finally {
       inflight.current = false
@@ -2912,14 +2942,18 @@ function ComfyStatusSeat(props) {
   const [confirming, setConfirming] = React.useState(false)
   const confirmTimer = React.useRef(null)
   // 是否显示状态胶囊由「外观设置 → 对话框显示 ComfyUI 状态」决定
-  const [seatEnabled, setSeatEnabled] = React.useState(true)
+  const [seatEnabled, setSeatEnabled] = React.useState(seatCache.enabled)
 
   React.useEffect(() => {
     let alive = true
     fetch(API_CONFIG, { cache: 'no-store' })
       .then((res) => res.json())
       .then((data) => {
-        if (alive && data?.config) setSeatEnabled(data.config.showStatusSeat !== false)
+        if (alive && data?.config) {
+          const on = data.config.showStatusSeat !== false
+          seatCache.enabled = on
+          setSeatEnabled(on)
+        }
       })
       .catch(() => {})
     return () => { alive = false }
